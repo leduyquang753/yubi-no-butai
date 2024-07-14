@@ -1,23 +1,35 @@
 #include "Renderer.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <utility>
 #include <sstream>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <GLES3/gl3.h>
+#include <android/asset_manager.h>
 #include <android/imagedecoder.h>
+#include <android/system_fonts.h>
 #include <game-activity/native_app_glue/android_native_app_glue.h>
 #include <glm/ext.hpp>
 #include <glm/glm.hpp>
+#include <minikin/Font.h>
+#include <minikin/FontCollection.h>
+#include <minikin/FontFamily.h>
 #include <oboe/Oboe.h>
 
 #include <audio/AggregateAudioStream.h>
 #include <audio/PreloadedAudioTrack.h>
 #include <audio/StreamingAudioStream.h>
+#include <text/MemoryFont.h>
+#include <text/TextLayout.h>
+#include <text/TextRenderer.h>
+#include <text/TextRenderingString.h>
 #include "AndroidOut.h"
 #include "BasicData.h"
 #include "Shader.h"
@@ -44,6 +56,9 @@
 	for (const auto &extension : extensionList) aout << extension << "\n";\
 	aout << std::endl;\
 } while (false)
+
+using namespace std::string_literals;
+using namespace std::string_view_literals;
 
 void Renderer::initRenderer() {
 	const auto assetManager = appData->activity->assetManager;
@@ -113,11 +128,18 @@ void Renderer::initRenderer() {
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glDisable(GL_CULL_FACE);
 
-	font.emplace(assetManager, "SegoeUi");
+	fonts = {
+		minikin::FontCollection::create({
+			minikin::FontFamily::create({minikin::Font::Builder(
+				std::make_shared<MemoryFont>(assetManager, 0, "segoeui.ttf", 0)
+			).build()}),
+		}),
+	};
 	testLine.emplace();
+	textRenderer.emplace();
 
 	aggregateStream.reset(new AggregateAudioStream());
-	musicStream.reset(new StreamingAudioStream(assetManager, "Can't let go 2 (GD cut).mp3"));
+	musicStream.reset(new StreamingAudioStream(assetManager, "Can't let go 2 (GD cut).mp3", audioDecodingThread));
 	effectTrack.reset(new PreloadedAudioTrack(assetManager, "Hit.wav"));
 	aggregateStream->play(musicStream.get());
 
@@ -146,6 +168,21 @@ void Renderer::initRenderer() {
 	}
 	nextNote = notes.begin();
 	AAsset_close(chartAsset);
+
+	/*
+	aout << "System fonts:" << std::endl;
+	const auto systemFontIterator = ASystemFontIterator_open();
+	for (
+		auto font = ASystemFontIterator_next(systemFontIterator);
+		font != nullptr;
+		font = ASystemFontIterator_next(systemFontIterator)
+	) {
+		aout
+			<< AFont_getFontFilePath(font) << " | "
+			<< (AFont_isItalic(font) ? "Italic" : "Straight") << " | "
+			<< AFont_getWeight(font) << std::endl;
+	}
+	*/
 }
 
 void Renderer::updateRenderArea() {
@@ -277,6 +314,8 @@ void Renderer::render() {
 	// changed.
 	updateRenderArea();
 
+	glClear(GL_COLOR_BUFFER_BIT);
+
 	playingEffects.resize(std::remove_if(
 		playingEffects.begin(), playingEffects.end(),
 		[this](const auto &effect) { return !aggregateStream->isPlaying(effect.handle); }
@@ -319,11 +358,19 @@ void Renderer::render() {
 		);
 	}
 
-	font->render(
-		"Hit: " + std::to_string(hitCount) + " / " + std::to_string(nextNote - notes.begin()), 64.f,
-		glm::translate(glm::ortho<float>(0, width, 0, height), glm::vec3(64.f, height - 128.f, 0.f)),
-		{0.44f, 0.69f, 1.f, 1.f}
-	);
+	TextLayout::Input textLayoutInput;
+	textLayoutInput.addRun(toTextRenderingString<char>(
+		"Hit: " + std::to_string(hitCount) + " / " + std::to_string(nextNote - notes.begin())
+	), 0, 48.f, 0.44f, 0.69f, 1.f, 1.f);
+	textLayoutInput.width = static_cast<float>(width - 100);
+	const TextLayout textLayout = TextLayout::make(fonts, textLayoutInput);
+	textRenderer->tick();
+	textRenderer->prepareForRendering(textLayout, true);
+	textRenderer->syncToGpu();
+	textRenderer->renderText(textLayout, glm::translate<float>(
+		glm::ortho<float>(0.f, static_cast<float>(width), static_cast<float>(height), 0.f),
+		glm::vec3(50.f, 100.f, 0.f)
+	), true);
 
 	assert(eglSwapBuffers(display, surface) == EGL_TRUE);
 }
@@ -334,6 +381,16 @@ oboe::DataCallbackResult Renderer::onAudioReady(
 	float *originalBuffer = static_cast<float*>(audioBuffer);
 	float *buffer = originalBuffer;
 	int actualFrames = aggregateStream->getAudio(buffer, frames);
+	for (int i = 0; i != actualFrames; ++i) {
+		const int firstSampleIndex = i * 2;
+		const float envelope = masterEnvelopeFollower(std::max(
+			std::abs(buffer[firstSampleIndex]), std::abs(buffer[firstSampleIndex + 1])
+		));
+		if (envelope > 1.f) {
+			buffer[firstSampleIndex] /= envelope;
+			buffer[firstSampleIndex + 1] /= envelope;
+		}
+	}
 	if (buffer != originalBuffer) std::copy(buffer, buffer + frames * 2, originalBuffer);
 	return actualFrames == frames ? oboe::DataCallbackResult::Continue : oboe::DataCallbackResult::Stop;
 }

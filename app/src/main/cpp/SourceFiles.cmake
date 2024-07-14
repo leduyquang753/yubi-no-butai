@@ -13,4 +13,9 @@ audio/AudioDecoder.cpp
 audio/PreloadedAudioStream.cpp
 audio/PreloadedAudioTrack.cpp
 audio/StreamingAudioStream.cpp
+
+text/MemoryFont.cpp
+text/SpriteSet.cpp
+text/TextLayout.cpp
+text/TextRenderer.cpp
 )

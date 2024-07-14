@@ -18,8 +18,7 @@
 
 namespace {
 
-const std::string vertexShader = R"vertex(
-#version 300 es
+const std::string vertexShader = R"vertex(#version 300 es
 uniform mat4 uProjection;
 in vec2 inPosition;
 in vec2 inUv;
@@ -31,8 +30,7 @@ void main() {
 }
 )vertex";
 
-static const std::string fragmentShader = R"fragment(
-#version 300 es
+static const std::string fragmentShader = R"fragment(#version 300 es
 precision mediump float;
 uniform sampler2D uTexture;
 uniform vec4 uColor;

@@ -53,9 +53,10 @@ android {
 	}
 	sourceSets {
 		getByName("main") {
-			jniLibs.srcDirs(arrayOf("../FFmpeg/libs"))
+			jniLibs.srcDirs(arrayOf("../CompiledLibraries/FFmpeg", "../CompiledLibraries/HarfBuzz"))
 		}
 	}
+	buildToolsVersion = "34.0.0"
 }
 
 dependencies {

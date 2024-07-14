@@ -8,8 +8,7 @@
 
 namespace {
 
-const std::string vertexShader = R"vertex(
-#version 300 es
+const std::string vertexShader = R"vertex(#version 300 es
 uniform mat4 uProjection;
 in vec2 inPosition;
 out float fragX;
@@ -20,8 +19,7 @@ void main() {
 }
 )vertex";
 
-static const std::string fragmentShader = R"fragment(
-#version 300 es
+static const std::string fragmentShader = R"fragment(#version 300 es
 precision highp float;
 uniform float uHalfWidth;
 uniform vec4 uColor;
@@ -56,15 +54,11 @@ void TestLine::render(const glm::mat4 &matrix, const float width, const float he
 	glUniform1f(uHalfWidth, halfWidth);
 	glUniform4fv(uColor, 1, color.index);
 
-	const float
-		extrudeStart = (matrix * glm::vec4(1.f, 0.f, 0.f, 0.f)).x * 540.f,
-		extrudeEnd = (matrix * glm::vec4(1.f, 0.f, -height, 0.f)).x * 540.f;
-
 	const float vertices[] = {
-		-halfWidth - extrudeStart, 0.f,
-		halfWidth + extrudeStart, 0.f,
-		halfWidth + extrudeEnd, -height,
-		-halfWidth - extrudeEnd, -height
+		-halfWidth - 1.f, 0.f,
+		halfWidth + 1.f, 0.f,
+		halfWidth + 1.f, -height,
+		-halfWidth - 1.f, -height
 	};
 	static const Index indices[] = {0, 1, 2, 2, 3, 0};
 

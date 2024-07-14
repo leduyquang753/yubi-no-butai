@@ -1,60 +1,74 @@
 #include <algorithm>
 #include <string>
 
+#include "AudioDecodingThread.h"
+
 #include "StreamingAudioStream.h"
 
 #include <android/asset_manager.h>
 
 namespace {
-	constexpr int minimumLoadBufferLength = 4800;
+	constexpr int minimumLoadBufferLength = 48000 * 2;
 	constexpr int loadBufferSize = minimumLoadBufferLength * 3;
 } // namespace
 
-StreamingAudioStream::StreamingAudioStream(
-	AAssetManager *const assetManager, const std::string &name
-): audioDecoder(assetManager, name) {
-	loadBuffer.reserve(loadBufferSize);
+StreamingAudioStream::Internal::Internal(
+	AAssetManager *const assetManager, const std::string &name, AudioDecodingThread &audioDecodingThread
+): audioDecodingThread(&audioDecodingThread), audioDecoder(assetManager, name) {
+	chunk1.buffer.reserve(loadBufferSize);
+	chunk2.buffer.reserve(loadBufferSize);
+	chunk1.hasNext = true;
+	audioDecodingThread.addTask({this, false});
 }
 
-int StreamingAudioStream::getAudio(float *&buffer, int frameCount) {
-	const int positionInBuffer = currentPosition - loadBufferPosition;
-	if ((positionInBuffer + frameCount) * 2 <= loadBuffer.size()) {
-		buffer = loadBuffer.data() + positionInBuffer * 2;
-		currentPosition += frameCount;
-		return frameCount;
-	} else if (loadFinished) {
-		const int actualFrameCount = static_cast<int>(loadBuffer.size()) / 2 - positionInBuffer;
-		buffer = loadBuffer.data() + positionInBuffer * 2;
-		currentPosition += actualFrameCount;
-		return actualFrameCount;
-	} else {
-		std::copy(loadBuffer.begin() + positionInBuffer * 2, loadBuffer.end(), buffer);
-		const int loadedFrameCount = static_cast<int>(loadBuffer.size()) / 2 - positionInBuffer;
-		currentPosition += loadedFrameCount;
-		loadBufferPosition = currentPosition;
-		loadBuffer.clear();
-		while (true) {
-			const int chunkFrameCount = audioDecoder.decodeOneChunk();
-			if (chunkFrameCount == 0) {
-				loadFinished = true;
-				const int framesRemaining = std::min(
-					frameCount - loadedFrameCount, static_cast<int>(loadBuffer.size()) / 2
-				);
-				std::copy(loadBuffer.begin(), loadBuffer.begin() + framesRemaining * 2, buffer + loadedFrameCount * 2);
-				currentPosition += framesRemaining;
-				return framesRemaining;
-			}
-			const int currentNewlyLoadedFrameCount = static_cast<int>(loadBuffer.size());
-			loadBuffer.resize(currentNewlyLoadedFrameCount + chunkFrameCount * 2);
-			audioDecoder.retrieveAudio(loadBuffer.data() + currentNewlyLoadedFrameCount, chunkFrameCount);
-			if (loadBuffer.size() >= minimumLoadBufferLength * 2) {
-				const int framesRemaining = frameCount - loadedFrameCount;
-				std::copy(
-					loadBuffer.begin(), loadBuffer.begin() + framesRemaining * 2, buffer + loadedFrameCount * 2
-				);
-				currentPosition += framesRemaining;
-				return frameCount;
-			}
+void StreamingAudioStream::Internal::fill() {
+	Chunk &chunk = playingChunk2 ? chunk1 : chunk2;
+	chunk.buffer.clear();
+	chunk.hasNext = true;
+	while (chunk.buffer.size() < minimumLoadBufferLength) {
+		const int chunkFrameCount = audioDecoder.decodeOneChunk();
+		if (chunkFrameCount == 0) {
+			chunk.hasNext = false;
+			break;
+		}
+		const int currentChunkSize = static_cast<int>(chunk.buffer.size());
+		chunk.buffer.resize(currentChunkSize + chunkFrameCount * 2);
+		audioDecoder.retrieveAudio(chunk.buffer.data() + currentChunkSize, chunkFrameCount);
+	}
+	decodingNextChunk = false;
+}
+
+int StreamingAudioStream::Internal::getAudio(float *&buffer, int frameCount) {
+	const int sampleCount = frameCount * 2;
+	int servedSampleCount = 0;
+	while (true) {
+		Chunk &currentChunk = playingChunk2 ? chunk2 : chunk1;
+		const int availableSampleCount = std::min(
+			static_cast<int>(currentChunk.buffer.size()) - currentChunkPosition, sampleCount - servedSampleCount
+		);
+		std::copy(
+			currentChunk.buffer.begin() + currentChunkPosition,
+			currentChunk.buffer.begin() + (currentChunkPosition + availableSampleCount),
+			buffer + servedSampleCount
+		);
+		servedSampleCount += availableSampleCount;
+		currentChunkPosition += availableSampleCount;
+		currentPosition += availableSampleCount / 2;
+		if (servedSampleCount == sampleCount) return frameCount;
+		if (!currentChunk.hasNext) return servedSampleCount / 2;
+		if (decodingNextChunk) {
+			// Decoding couldn't keep up. Temporarily serve silence.
+			std::fill(buffer + servedSampleCount, buffer + sampleCount, 0.f);
+			return frameCount;
+		} else {
+			playingChunk2 = !playingChunk2;
+			currentChunkPosition = 0;
+			decodingNextChunk = true;
+			audioDecodingThread->addTask({this, false});
 		}
 	}
+}
+
+void StreamingAudioStream::Internal::queueDestruction() {
+	audioDecodingThread->addTask({this, true});
 }
