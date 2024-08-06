@@ -1,5 +1,7 @@
 #include <algorithm>
 
+#include <GLES3/gl3.h>
+
 #include "SpriteSet.h"
 
 namespace {
@@ -88,6 +90,8 @@ void SpriteSet::tick() {
 		}
 		destinationPage.firstDirtyY = std::min(destinationPage.firstDirtyY, destinationY);
 		destinationPage.pastLastDirtyY = std::max(destinationPage.pastLastDirtyY, destinationY + height);
+		destinationPage.firstDirtyX = std::min(destinationPage.firstDirtyX, destinationX);
+		destinationPage.pastLastDirtyX = std::max(destinationPage.pastLastDirtyX, destinationX + width);
 		changedPixels += remove(sourceSlotIndex);
 	}
 }
@@ -117,6 +121,8 @@ SpriteSet::Handle SpriteSet::add(const unsigned width, const unsigned height, co
 	}
 	page.firstDirtyY = std::min(page.firstDirtyY, shelf.y);
 	page.pastLastDirtyY = std::max(page.pastLastDirtyY, shelf.y + paddedHeight);
+	page.firstDirtyX = std::min(page.firstDirtyX, slot.x);
+	page.pastLastDirtyX = std::max(page.pastLastDirtyX, slot.x + paddedWidth);
 	return {slotIndex, slot.epoch};
 }
 
@@ -158,6 +164,8 @@ unsigned SpriteSet::allocate(const unsigned width, const unsigned height) {
 	page.textureData.emplace(pageSize * pageSize);
 	page.firstDirtyY = pageSize;
 	page.pastLastDirtyY = 0;
+	page.firstDirtyX = pageSize;
+	page.pastLastDirtyX = 0;
 	glGenTextures(1, &page.textureId);
 	glBindTexture(GL_TEXTURE_2D, page.textureId);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -338,12 +346,18 @@ void SpriteSet::syncToGpu() {
 		Page &page = pagePool[pageIndex];
 		if (page.firstDirtyY < page.pastLastDirtyY) {
 			glBindTexture(GL_TEXTURE_2D, page.textureId);
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, pageSize);
 			glTexSubImage2D(
-				GL_TEXTURE_2D, 0, 0, page.firstDirtyY, pageSize, page.pastLastDirtyY - page.firstDirtyY,
-				GL_RED, GL_UNSIGNED_BYTE, page.textureData->data() + page.firstDirtyY * pageSize
+				GL_TEXTURE_2D, 0,
+				page.firstDirtyX, page.firstDirtyY,
+				page.pastLastDirtyX - page.firstDirtyX, page.pastLastDirtyY - page.firstDirtyY,
+				GL_RED, GL_UNSIGNED_BYTE, page.textureData->data() + (page.firstDirtyY * pageSize + page.firstDirtyX)
 			);
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 			page.firstDirtyY = pageSize;
 			page.pastLastDirtyY = 0;
+			page.firstDirtyX = pageSize;
+			page.pastLastDirtyX = 0;
 		}
 		if (pageIndex == lastPageIndex) break;
 		pageIndex = pagePool[pageIndex].nextIndex;

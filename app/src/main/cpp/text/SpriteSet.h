@@ -5,8 +5,6 @@
 #include <optional>
 #include <vector>
 
-#include <GLES3/gl3.h>
-
 #include "LruList.h"
 
 class SpriteSet final {
@@ -16,7 +14,7 @@ class SpriteSet final {
 			unsigned previousIndex, nextIndex;
 			unsigned firstShelfIndex;
 			unsigned textureId;
-			unsigned firstDirtyY, pastLastDirtyY;
+			unsigned firstDirtyY, pastLastDirtyY, firstDirtyX, pastLastDirtyX;
 			std::optional<std::vector<unsigned char>> textureData;
 		};
 		struct Shelf {
